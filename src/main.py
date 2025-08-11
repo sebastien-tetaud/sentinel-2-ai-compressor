@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from data.dataset import Sentinel2Dataset
 from data.loader import define_loaders
-from model_zoo.models import define_model
+from model_zoo.models import define_model, AutoEncoder
 from training.metrics import MultiSpectralMetrics, avg_metric_bands
 from utils.torch import count_parameters, load_model_weights, seed_everything
 from utils.utils import load_config
@@ -112,13 +112,31 @@ def prepare_data(config):
 def build_model(config):
 
 
-    model = define_model(
-        name=config['MODEL']['model_name'],
-        encoder_name=config['MODEL']['encoder_name'],
-        encoder_weights = config['MODEL']['encoder_weights'],
-        in_channel=len(config['DATASET']['bands']),
-        out_channels=len(config['DATASET']['bands']),
-        activation=config['MODEL']['activation'])
+    if config['MODEL']['model_name'] == "AutoEncoder":
+
+        logger.info(f"Using AutoEncoder with depth: {config['MODEL']['depth']}")
+        logger.info(f"Base channels: {config['MODEL']['base_channels']}")
+        logger.info(f"Input channels: {len(config['DATASET']['bands'])}")
+        logger.info(f"Output channels: {len(config['DATASET']['bands'])}")
+
+        model = AutoEncoder(
+            in_channels=len(config['DATASET']['bands']),
+            out_channels=len(config['DATASET']['bands']),
+            base_channels=config['MODEL']['base_channels'],
+            depth=config['MODEL']['depth'],
+            bottleneck_factor=config['MODEL']['bottleneck_factor'],
+            
+        )
+    else:
+
+        model = define_model(
+            name=config['MODEL']['model_name'],
+            encoder_name=config['MODEL']['encoder_name'],
+            encoder_weights=config['MODEL']['encoder_weights'],
+            in_channel=len(config['DATASET']['bands']),
+            out_channels=len(config['DATASET']['bands']),
+            activation=config['MODEL']['activation']
+        )
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     model = model.to(device)

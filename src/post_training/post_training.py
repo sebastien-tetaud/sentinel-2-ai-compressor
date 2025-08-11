@@ -23,7 +23,7 @@ sys.path.append(project_root)
 from data.loader import define_loaders
 from utils.utils import load_config, prepare_paths
 from utils.torch import load_model_weights
-from model_zoo.models import define_model
+from model_zoo.models import define_model, AutoEncoder
 from utils.plot import plot_metrics, plot_training_loss
 from data.dataset import Sentinel2Dataset, read_images, normalize
 from training.metrics import MultiSpectralMetrics
@@ -137,45 +137,38 @@ def evaluate_and_plot(model, df_test_input, df_test_output, bands,cmap,  resize,
 
     # Convert tensors to NumPy
     x_np = x_tensor.cpu().numpy()[0].transpose(1, 2, 0)       # [H, W, C]
-    y_np = torch.from_numpy(y_data).numpy()                   # [H, W, C]
+    # y_np = torch.from_numpy(y_data).numpy()                   # [H, W, C]
     pred_np = pred_tensor.cpu().numpy()[0].transpose(1, 2, 0) # [H, W, C]
 
-    # Apply mask: set invalid pixels to 0
-    # x_np[~valid_mask] = 0.0
-    y_np[~valid_mask] = 0.0
+
     pred_np[~valid_mask] = 0.0
 
     # Plot results for each band
     for idx, band in enumerate(bands):
-        fig, axs = plt.subplots(1, 4, figsize=(20, 6))
+        fig, axs = plt.subplots(1, 3, figsize=(20, 6))
 
         vmin = 0
         vmax = 1  # Normalized range
 
         # Input
         im0 = axs[0].imshow(x_np[:, :, idx], cmap=cmap, vmin=vmin, vmax=vmax)
-        axs[0].set_title(f"L1C Input - {band}", fontsize=14)
+        axs[0].set_title(f"L2A Input - {band}", fontsize=14)
         axs[0].axis('off')
         plt.colorbar(im0, ax=axs[0], fraction=0.046, pad=0.04)
 
-        # Target
-        im1 = axs[1].imshow(y_np[:, :, idx], cmap=cmap, vmin=vmin, vmax=vmax)
-        axs[1].set_title(f"L2A Target - {band}", fontsize=14)
-        axs[1].axis('off')
-        plt.colorbar(im1, ax=axs[1], fraction=0.046, pad=0.04)
 
         # Prediction
-        im2 = axs[2].imshow(pred_np[:, :, idx], cmap=cmap, vmin=vmin, vmax=vmax)
-        axs[2].set_title(f" L2A Prediction - {band}", fontsize=14)
-        axs[2].axis('off')
-        plt.colorbar(im2, ax=axs[2], fraction=0.046, pad=0.04)
+        im2 = axs[1].imshow(pred_np[:, :, idx], cmap=cmap, vmin=vmin, vmax=vmax)
+        axs[1].set_title(f" L2A Prediction - {band}", fontsize=14)
+        axs[1].axis('off')
+        plt.colorbar(im2, ax=axs[1], fraction=0.046, pad=0.04)
 
         # Absolute Difference
-        diff_target_pred = np.abs(y_np[:, :, idx] - pred_np[:, :, idx])
-        im3 = axs[3].imshow(diff_target_pred, cmap=cmap, vmin=0, vmax=diff_target_pred.max())
-        axs[3].set_title(f"Abs Difference - {band}", fontsize=14)
-        axs[3].axis('off')
-        plt.colorbar(im3, ax=axs[3], fraction=0.046, pad=0.04)
+        diff_target_pred = np.abs(x_np[:, :, idx] - pred_np[:, :, idx])
+        im3 = axs[2].imshow(diff_target_pred, cmap=cmap, vmin=0, vmax=diff_target_pred.max())
+        axs[2].set_title(f"Abs Difference - {band}", fontsize=14)
+        axs[2].axis('off')
+        plt.colorbar(im3, ax=axs[2], fraction=0.046, pad=0.04)
 
         plt.tight_layout()
 
@@ -325,7 +318,7 @@ def post_traing_analysis(path):
 
     df_test_output = calculate_valid_pixel_percentages(df=df_test_output, column_name="path", show_progress=True)
 
-    test_dataset = Sentinel2Dataset(df_x=df_test_input, df_y=df_test_output, train=True, augmentation=False, img_size=resize)
+    test_dataset = Sentinel2Dataset(df_x=df_test_output, df_y=df_test_output, train=True, augmentation=False, img_size=resize)
     test_loader = define_loaders(
         train_dataset=test_dataset,
         val_dataset=None,
@@ -335,11 +328,30 @@ def post_traing_analysis(path):
     )
 
     weights_path = f"{exp_paths['checkpoint_path']}/best_model.pth"
-    model = define_model(name=config["MODEL"]["model_name"],
-                        encoder_name=config["MODEL"]["encoder_name"],
-                        in_channel=len(bands),
-                        out_channels=len(bands),
-                        activation=config["MODEL"]["activation"])
+    if config['MODEL']['model_name'] == "AutoEncoder":
+
+        logger.info(f"Using AutoEncoder with depth: {config['MODEL']['depth']}")
+        logger.info(f"Base channels: {config['MODEL']['base_channels']}")
+        logger.info(f"Input channels: {len(config['DATASET']['bands'])}")
+        logger.info(f"Output channels: {len(config['DATASET']['bands'])}")
+
+        model = AutoEncoder(
+            in_channels=len(config['DATASET']['bands']),
+            out_channels=len(config['DATASET']['bands']),
+            base_channels=config['MODEL']['base_channels'],
+            depth=config['MODEL']['depth'],
+            bottleneck_factor=config['MODEL']['bottleneck_factor']
+        )
+    else:
+
+        model = define_model(
+            name=config['MODEL']['model_name'],
+            encoder_name=config['MODEL']['encoder_name'],
+            encoder_weights=config['MODEL']['encoder_weights'],
+            in_channel=len(config['DATASET']['bands']),
+            out_channels=len(config['DATASET']['bands']),
+            activation=config['MODEL']['activation']
+        )
 
     # Load best model weights
     model = load_model_weights(model=model, filename=weights_path)
@@ -376,7 +388,7 @@ def post_traing_analysis(path):
     sns.set(style="whitegrid")
     fig, axs = plt.subplots(1, len(bands), figsize=(18, 6))
     cmap = plt.cm.plasma
-    global_ymax = max(df_test_output[f'sam_{band}'].max() for band in bands) * 1.05  # 5% buffer
+    global_ymax = max(df_test_output[f'sam_{band} [rad]'].max() for band in bands) * 1.05  # 5% buffer
 
     for i, band in enumerate(bands):
         ax = axs[i]
@@ -384,7 +396,7 @@ def post_traing_analysis(path):
                             c=df_test_output['cloud_cover'], cmap=cmap)
         ax.set_title(f"{band} - Test Data", fontsize=14)
         ax.set_xlabel("Cloud Cover (%)", fontsize=12)
-        ax.set_ylabel("SAM", fontsize=12)
+        ax.set_ylabel("SAM [rad]", fontsize=12)
         ax.set_ylim(0, global_ymax)
         plt.colorbar(scatter, ax=ax, label="Cloud Cover (%)")
 
@@ -420,7 +432,7 @@ def post_traing_analysis(path):
                             c=df_test_output['valid_pixel'], cmap=cmap)
         ax.set_title(f"{band} - Test Data", fontsize=14)
         ax.set_xlabel("Valid Pixel (%)", fontsize=12)
-        ax.set_ylabel(f"SAM {band}", fontsize=12)
+        ax.set_ylabel(f"SAM {band} [rad]", fontsize=12)
         ax.set_ylim(0, global_ymax)
         plt.colorbar(scatter, ax=ax, label="Valid Pixel (%)")
 
@@ -495,4 +507,4 @@ def post_traing_analysis(path):
                         device=device, index=idx, verbose=False, save=True, output_path=output_best_ssim_path)
 
 
-# post_traing_analysis(path="/home/ubuntu/project/sentinel-2-ai-processor/src/results/2025-06-12_05-17-04")
+# post_traing_analysis(path="/home/ubuntu/project/sentinel-2-ai-compressor/src/results/2025-08-05_15-58-46")
