@@ -30,22 +30,25 @@ def seed_everything(seed):
 
 
 
-def count_parameters(model, all=False):
+def count_parameters(model):
     """
-    Count the parameters of a model.
+    Count the total number of parameters in a PyTorch model.
 
     Args:
-        model (torch model): Model to count the parameters of.
-        all (bool, optional):  Whether to count not trainable parameters. Defaults to False.
+        model: PyTorch model
 
     Returns:
-        int: Number of parameters.
+        dict: Dictionary with total and trainable parameter counts
     """
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    non_trainable_params = total_params - trainable_params
 
-    if all:
-        return sum(p.numel() for p in model.parameters())
-    else:
-        return sum(p.numel() for p in model.parameters() if p.requires_grad)
+    return {
+        'total': total_params,
+        'trainable': trainable_params,
+        'non_trainable': non_trainable_params
+    }
 
 
 def load_model_weights(model, filename, verbose=1, cp_folder="", strict=True):
@@ -106,3 +109,31 @@ def load_model_weights(model, filename, verbose=1, cp_folder="", strict=True):
 
     return model
 
+
+def get_model_size_mb(model):
+    """
+    Calculate the size of a PyTorch model in MB.
+
+    Args:
+        model: PyTorch model
+
+    Returns:
+        float: Model size in MB
+    """
+    # Calculate model parameters size
+    param_size = 0
+    buffer_size = 0
+
+    for param in model.parameters():
+        param_size += param.nelement() * param.element_size()
+
+    for buffer in model.buffers():
+        buffer_size += buffer.nelement() * buffer.element_size()
+
+    # Total size in bytes
+    model_size_bytes = param_size + buffer_size
+
+    # Convert to MB
+    model_size_mb = model_size_bytes / (1024 * 1024)
+
+    return model_size_mb
