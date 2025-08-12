@@ -125,7 +125,7 @@ def build_model(config):
             base_channels=config['MODEL']['base_channels'],
             depth=config['MODEL']['depth'],
             bottleneck_factor=config['MODEL']['bottleneck_factor'],
-            
+
         )
     else:
 

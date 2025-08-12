@@ -115,7 +115,7 @@ class AutoEncoder(nn.Module):
 
         # Final output layer
         self.last_layer = nn.Conv2d(in_channels, in_channels, kernel_size=1)
-        self.output_layer = nn.Sigmoid()
+        self.output_layer = nn.ReLU()
         self.channel_progression = channels
         self.bottleneck_channels = bottleneck_channels
 

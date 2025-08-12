@@ -22,9 +22,9 @@ MODEL:
   in_channel: 3
   out_channels: 3
   base_channels: 64
-  depth: 7
+  depth: 5
   bottleneck_factor: 0.5
-  activation: Sigmoid
+  activation: relu
 
 
 TRAINING:
