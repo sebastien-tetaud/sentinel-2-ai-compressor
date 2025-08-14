@@ -20,7 +20,7 @@ def define_model(
         # Create the model
         model = ModelClass(
             encoder_name=encoder_name,
-            encoder_weights=encoder_weights,
+            # encoder_weights=encoder_weights,
             in_channels=in_channel,
             classes=out_channels,
             activation=None,

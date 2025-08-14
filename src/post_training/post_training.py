@@ -25,7 +25,7 @@ from utils.utils import load_config, prepare_paths
 from utils.torch import load_model_weights
 from model_zoo.models import define_model, AutoEncoder
 from utils.plot import plot_metrics, plot_training_loss
-from data.dataset import Sentinel2Dataset, read_images, normalize
+from data.dataset import Sentinel2ZarrDataset, read_images, normalize
 from training.metrics import MultiSpectralMetrics
 
 def generate_exp_paths(exp_path):
@@ -84,7 +84,7 @@ def prepare_data(config):
     TEST_DIR = f"/mnt/disk/dataset/sentinel-ai-processor/{version}/test/"
     df_test_input, df_test_output = prepare_paths(TEST_DIR)
 
-    test_dataset = Sentinel2Dataset(df_x=df_test_input, df_y=df_test_output,
+    test_dataset = Sentinel2ZarrDataset(df_x=df_test_input, df_y=df_test_output,
                                      train=True, augmentation=False, img_size=resize)
     logger.info(df_test_output.head(5))
 
@@ -317,8 +317,9 @@ def post_traing_analysis(path):
     df_test_input, df_test_output = prepare_paths(test_dir)
 
     df_test_output = calculate_valid_pixel_percentages(df=df_test_output, column_name="path", show_progress=True)
+    test_dataset = Sentinel2ZarrDataset(df_x=df_test_output,res=res, bands=bands, target_size=(320,320))
 
-    test_dataset = Sentinel2Dataset(df_x=df_test_output, df_y=df_test_output, train=True, augmentation=False, img_size=resize)
+    # test_dataset = Sentinel2Dataset(df_x=df_test_output, df_y=df_test_output, train=True, augmentation=False, img_size=resize)
     test_loader = define_loaders(
         train_dataset=test_dataset,
         val_dataset=None,
@@ -507,4 +508,4 @@ def post_traing_analysis(path):
                         device=device, index=idx, verbose=False, save=True, output_path=output_best_ssim_path)
 
 
-# post_traing_analysis(path="/home/ubuntu/project/sentinel-2-ai-compressor/src/results/2025-08-05_15-58-46")
+# post_traing_analysis(path="/home/ubuntu/project/sentinel-2-ai-compressor/src/results/2025-08-14_14-03-11")
