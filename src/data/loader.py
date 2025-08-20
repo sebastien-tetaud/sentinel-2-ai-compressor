@@ -35,7 +35,10 @@ def define_loaders(
         batch_size=batch_size,
         shuffle=False,
         drop_last=False,
+        prefetch_factor=3,
+        persistent_workers=True,
         num_workers=num_workers,
+        multiprocessing_context='forkserver'
     )
     if train:
         val_loader = DataLoader(
@@ -43,6 +46,9 @@ def define_loaders(
             batch_size=batch_size,
             shuffle=False,
             num_workers=num_workers,
+            prefetch_factor=3,
+            persistent_workers=True,
+            multiprocessing_context='forkserver'
         )
         return train_loader, val_loader
 

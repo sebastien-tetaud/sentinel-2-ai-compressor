@@ -9,6 +9,8 @@ import xarray as xr
 import glob
 from PIL import Image
 import os
+from loguru import logger
+
 
 
 def normalize(data_array):
@@ -196,30 +198,38 @@ class Sentinel2TCIDataset(Dataset):
         return len(self.df_path)
 
 
-# TODO NO resize
+# ---------------- Dataset ----------------
 # class Sentinel2ZarrDataset(Dataset):
-#     def __init__(self, df_x, res, bands):
+#     def __init__(self, df_x, res, bands, target_size=(320, 320)):
 #         self.df_x = df_x
 #         self.res = res
 #         self.bands = bands
+#         self.target_size = target_size
 #         self.res_key = f"r{res}"
 #         self.x_res = f"x_{res}"
 #         self.y_res = f"y_{res}"
+
+#         logger.info(f"Dataset initialized with {len(df_x)} items | res={res} | bands={bands} | target_size={target_size}")
 
 #     def __len__(self):
 #         return len(self.df_x)
 
 #     def __getitem__(self, index):
 #         zarr_path = self.df_x["path"].iloc[index] + ".zarr"
+#         logger.debug(f"[{index}] Opening Zarr file: {zarr_path}")
+
 #         datatree = xr.open_datatree(zarr_path, engine="zarr", mask_and_scale=False, chunks={})
 #         data = datatree.measurements.reflectance[self.res_key]
+#         logger.debug(f"[{index}] Opened reflectance group: {self.res_key}")
 
 #         # Get chunk layout
-#         band  = self.bands[0]
+#         band = self.bands[0]
 #         chunk_size_y = data[band].chunksizes[self.y_res][0]
 #         chunk_size_x = data[band].chunksizes[self.x_res][0]
 #         nb_chunks_y = len(data[band].chunksizes[self.y_res])
 #         nb_chunks_x = len(data[band].chunksizes[self.x_res])
+
+#         logger.debug(f"[{index}] Chunk layout: {nb_chunks_y}x{nb_chunks_x}, chunk_size=({chunk_size_y},{chunk_size_x})")
 
 #         all_chunks, all_masks = [], []
 
@@ -227,26 +237,59 @@ class Sentinel2TCIDataset(Dataset):
 #             for col in range(nb_chunks_x):
 #                 y_start = row * chunk_size_y
 #                 x_start = col * chunk_size_x
+#                 logger.debug(f"[{index}] Processing chunk ({row},{col}) slice=({y_start}:{y_start+chunk_size_y}, {x_start}:{x_start+chunk_size_x})")
+
 #                 chunk_ds = data.isel(
 #                     {self.y_res: slice(y_start, y_start + chunk_size_y),
 #                      self.x_res: slice(x_start, x_start + chunk_size_x)}
 #                 )
-#                 chunk_array = chunk_ds.to_dataset().to_dataarray().values
+
+
+#                 chunk_ds = data[self.bands][y_start: y_start + chunk_size_y,x_start: x_start + chunk_size_x ]
+
+
+#                 chunk_ds
+
+#                 chunk_array = chunk_ds.to_dataset().to_dataarray().compute().values
+#                 # logger.debug(f"[{index}] Chunk ({row},{col}) raw shape: {chunk_array.shape}")
 
 #                 chunk_array, mask_array = normalize(chunk_array)
+#                 # logger.debug(f"[{index}] Chunk ({row},{col}) normalized")
 
-#                 #
+#                 # Convert to torch [C, H, W]
+#                 chunk_tensor = torch.from_numpy(chunk_array).float()
+#                 mask_tensor = torch.from_numpy(mask_array).float()
 
-#                 all_chunks.append(torch.from_numpy(chunk_array))
-#                 all_masks.append(torch.from_numpy(mask_array))
+#                 # Resize to target size
+#                 chunk_tensor = F.interpolate(
+#                     chunk_tensor.unsqueeze(0),
+#                     size=self.target_size,
+#                     mode='bilinear',
+#                     align_corners=False
+#                 ).squeeze(0)
+
+#                 mask_tensor = F.interpolate(
+#                     mask_tensor.unsqueeze(0),
+#                     size=self.target_size,
+#                     mode='nearest'
+#                 ).squeeze(0)
+#                 mask_tensor = mask_tensor > 0.5
+
+#                 # logger.debug(f"[{index}] Chunk ({row},{col}) resized to {self.target_size}, tensor shape: {chunk_tensor.shape}")
+
+#                 all_chunks.append(chunk_tensor)
+#                 all_masks.append(mask_tensor)
 
 #         chunks_grid = torch.stack(all_chunks).view(nb_chunks_y, nb_chunks_x, *all_chunks[0].shape)
 #         masks_grid = torch.stack(all_masks).view(nb_chunks_y, nb_chunks_x, *all_masks[0].shape)
 #         meta = (nb_chunks_y, nb_chunks_x, chunk_size_y, chunk_size_x)
+
+#         datatree.close()
+#         # logger.debug(f"[{index}] Finished processing -> chunks_grid: {chunks_grid.shape}, masks_grid: {masks_grid.shape}")
+
 #         return chunks_grid, masks_grid, meta
 
 
-# ---------------- Dataset ----------------
 class Sentinel2ZarrDataset(Dataset):
     def __init__(self, df_x, res, bands, target_size=(320, 320)):
         self.df_x = df_x
@@ -264,27 +307,31 @@ class Sentinel2ZarrDataset(Dataset):
         zarr_path = self.df_x["path"].iloc[index] + ".zarr"
         datatree = xr.open_datatree(zarr_path, engine="zarr", mask_and_scale=False, chunks={})
         data = datatree.measurements.reflectance[self.res_key]
+        data = data.to_dataset()
+        data = data[self.bands].to_dataarray()
 
-        # Get chunk layout
+        # --- Get chunk layout ---
         band  = self.bands[0]
-        chunk_size_y = data[band].chunksizes[self.y_res][0]
-        chunk_size_x = data[band].chunksizes[self.x_res][0]
-        nb_chunks_y = len(data[band].chunksizes[self.y_res])
-        nb_chunks_x = len(data[band].chunksizes[self.x_res])
+        chunk_size_y = data.chunksizes[self.y_res][0]
+        chunk_size_x = data.chunksizes[self.x_res][0]
+        nb_chunks_y = len(data.chunksizes[self.y_res])
+        nb_chunks_x = len(data.chunksizes[self.x_res])
+
 
         all_chunks, all_masks = [], []
 
-        for row in range(nb_chunks_y):
-            for col in range(nb_chunks_x):
+        for row in range(nb_chunks_y):  # Y direction
+            for col in range(nb_chunks_x):  # X direction
                 y_start = row * chunk_size_y
                 x_start = col * chunk_size_x
                 chunk_ds = data.isel(
-                    {self.y_res: slice(y_start, y_start + chunk_size_y),
-                     self.x_res: slice(x_start, x_start + chunk_size_x)}
-                )
+                            {self.y_res: slice(y_start, y_start + chunk_size_y),
+                            self.x_res: slice(x_start, x_start + chunk_size_x)}
+                        )
 
-                chunk_array = chunk_ds.to_dataset().to_dataarray().values
+                chunk_array = chunk_ds.values.astype(np.float32)
                 chunk_array, mask_array = normalize(chunk_array)
+                # logger.debug(f"[{index}] Chunk ({row},{col}) normalized")
 
                 # Convert to torch [C, H, W]
                 chunk_tensor = torch.from_numpy(chunk_array).float()
@@ -292,7 +339,7 @@ class Sentinel2ZarrDataset(Dataset):
 
                 # Resize to target size
                 chunk_tensor = F.interpolate(
-                    chunk_tensor.unsqueeze(0),  # add batch dim
+                    chunk_tensor.unsqueeze(0),
                     size=self.target_size,
                     mode='bilinear',
                     align_corners=False
@@ -303,9 +350,9 @@ class Sentinel2ZarrDataset(Dataset):
                     size=self.target_size,
                     mode='nearest'
                 ).squeeze(0)
-                # Convert to boolean mask
                 mask_tensor = mask_tensor > 0.5
 
+                # logger.debug(f"[{index}] Chunk ({row},{col}) resized to {self.target_size}, tensor shape: {chunk_tensor.shape}")
 
                 all_chunks.append(chunk_tensor)
                 all_masks.append(mask_tensor)
@@ -313,4 +360,8 @@ class Sentinel2ZarrDataset(Dataset):
         chunks_grid = torch.stack(all_chunks).view(nb_chunks_y, nb_chunks_x, *all_chunks[0].shape)
         masks_grid = torch.stack(all_masks).view(nb_chunks_y, nb_chunks_x, *all_masks[0].shape)
         meta = (nb_chunks_y, nb_chunks_x, chunk_size_y, chunk_size_x)
+
+        datatree.close()
+        # logger.debug(f"[{index}] Finished processing -> chunks_grid: {chunks_grid.shape}, masks_grid: {masks_grid.shape}")
+
         return chunks_grid, masks_grid, meta

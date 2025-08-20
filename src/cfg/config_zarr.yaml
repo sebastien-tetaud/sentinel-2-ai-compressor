@@ -11,7 +11,7 @@ ENDPOINTS:
 
 MODEL:
   model_name: "Unet"
-  encoder_name: "timm-efficientnet-b2"
+  encoder_name: "timm-efficientnet-b0"
   encoder_weights: "imagenet"
   in_channel: 11
   out_channels: 11
@@ -39,7 +39,7 @@ TRAINING:
     batch_size: 2
     augmentation: False
     n_epoch: 100
-    num_workers : 8
+    num_workers : 4
     save_strategy: metric # loss/ metric
     save_metric: sam #ssim, psnr, sam, rmse
     save_mode: min  #min, max

@@ -79,20 +79,21 @@ def prepare_data(config):
         DataLoader: Data loader for the test dataset.
     """
     version = config['DATASET']['version']
-    resize = config['TRAINING']['resize']
+    # resize = config['TRAINING']['resize']
+    res = config['DATASET']['res']
+    bands = config['DATASET']['bands']
 
     TEST_DIR = f"/mnt/disk/dataset/sentinel-ai-processor/{version}/test/"
     df_test_input, df_test_output = prepare_paths(TEST_DIR)
 
-    test_dataset = Sentinel2ZarrDataset(df_x=df_test_input, df_y=df_test_output,
-                                     train=True, augmentation=False, img_size=resize)
+    test_dataset = Sentinel2ZarrDataset(df_x=df_test_output, res=res, bands=bands, target_size=(320,320))
     logger.info(df_test_output.head(5))
 
     return define_loaders(
         train_dataset=test_dataset,
         val_dataset=None,
         train=False,
-        batch_size=config['TRAINING']['batch_size'],
+        batch_size=1,
         num_workers=config['TRAINING']['num_workers']
     )
 
@@ -285,6 +286,7 @@ def post_traing_analysis(path):
     resize = config['TRAINING']['resize']
     num_workers = config['TRAINING']['num_workers']
 
+
     df_loss = pd.read_csv(f"{exp_paths['metrics_path']}/losses.csv")
     df_ssim = pd.read_csv(f"{exp_paths['metrics_path']}/ssim_metrics.csv")
     df_sam = pd.read_csv(f"{exp_paths['metrics_path']}/sam_metrics.csv")
@@ -315,18 +317,13 @@ def post_traing_analysis(path):
     # Load test data
     test_dir = f"/mnt/disk/dataset/sentinel-ai-processor/{version}/test/"
     df_test_input, df_test_output = prepare_paths(test_dir)
+    res = config['DATASET']['res']
 
     df_test_output = calculate_valid_pixel_percentages(df=df_test_output, column_name="path", show_progress=True)
-    test_dataset = Sentinel2ZarrDataset(df_x=df_test_output,res=res, bands=bands, target_size=(320,320))
+    test_loader = prepare_data(config=config)
 
-    # test_dataset = Sentinel2Dataset(df_x=df_test_output, df_y=df_test_output, train=True, augmentation=False, img_size=resize)
-    test_loader = define_loaders(
-        train_dataset=test_dataset,
-        val_dataset=None,
-        train=False,
-        batch_size=1,
-        num_workers=num_workers
-    )
+
+
 
     weights_path = f"{exp_paths['checkpoint_path']}/best_model.pth"
     if config['MODEL']['model_name'] == "AutoEncoder":
@@ -368,28 +365,36 @@ def post_traing_analysis(path):
 
     with torch.no_grad():
         with tqdm(total=len(test_loader.dataset), ncols=100, colour='#cc99ff') as t:
-            for x_data, y_data, valid_mask in test_loader:
-                x_data, y_data, valid_mask = x_data.to(device), y_data.to(device), valid_mask.to(device)
-                outputs = model(x_data)
+           for chunks_grid, masks_grid, meta in test_loader:
+                B, ny, nx, C, H, W = chunks_grid.shape
+                chunks_tensor = chunks_grid.view(B*ny*nx, C, H, W).to(device)
+                masks_tensor = masks_grid.view(B*ny*nx, C, H, W).to(device)
+                outputs = model(chunks_tensor)
                 test_metrics_tracker.reset()
-                test_metrics_tracker.update(outputs, y_data, valid_mask)
+                test_metrics_tracker.update(outputs, chunks_tensor, masks_tensor)
                 metrics = test_metrics_tracker.compute()
 
                 for band in test_metrics_tracker.bands:
                     for metric_name in ['psnr', 'rmse', 'ssim', 'sam']:
                         metrics_dict[f"{metric_name}_{band}"].append(metrics[band][metric_name])
 
-                t.update(x_data.size(0))
+                t.update(B)
 
     # Update DataFrame with metrics
     for column_name, values in metrics_dict.items():
         df_test_output[column_name] = values
 
-    # Visualization for SAM vs Cloud Cover
-    sns.set(style="whitegrid")
-    fig, axs = plt.subplots(1, len(bands), figsize=(18, 6))
+    import math
+
+    # Number of columns
+    ncols = 3
+    nrows = math.ceil(len(bands) / ncols)
+
+    # --- SAM vs Cloud Cover ---
+    fig, axs = plt.subplots(nrows, ncols, figsize=(6*ncols, 5*nrows))
+    axs = axs.flatten()  # make it 1D for easy indexing
     cmap = plt.cm.plasma
-    global_ymax = max(df_test_output[f'sam_{band} [rad]'].max() for band in bands) * 1.05  # 5% buffer
+    global_ymax = max(df_test_output[f'sam_{band}'].max() for band in bands) * 1.05
 
     for i, band in enumerate(bands):
         ax = axs[i]
@@ -401,13 +406,19 @@ def post_traing_analysis(path):
         ax.set_ylim(0, global_ymax)
         plt.colorbar(scatter, ax=ax, label="Cloud Cover (%)")
 
+    # Hide unused subplots (if any)
+    for j in range(len(bands), len(axs)):
+        fig.delaxes(axs[j])
+
     plt.tight_layout()
     plt.savefig(f"{exp_paths['metrics_path']}/sam_vs_cloud_cover.svg")
     plt.close()
 
-    # Visualization for SSIM vs Cloud Cover
-    fig, axs = plt.subplots(1, len(bands), figsize=(18, 6))
-    global_ymin = min(df_test_output[f'ssim_{band}'].min() for band in bands) * 0.98  # 5% buffer
+
+    # --- SSIM vs Cloud Cover ---
+    fig, axs = plt.subplots(nrows, ncols, figsize=(6*ncols, 5*nrows))
+    axs = axs.flatten()
+    global_ymin = min(df_test_output[f'ssim_{band}'].min() for band in bands) * 0.98
 
     for i, band in enumerate(bands):
         ax = axs[i]
@@ -419,12 +430,17 @@ def post_traing_analysis(path):
         ax.set_ylim(global_ymin, 1.0)
         plt.colorbar(scatter, ax=ax, label="Cloud Cover (%)")
 
+    for j in range(len(bands), len(axs)):
+        fig.delaxes(axs[j])
+
     plt.tight_layout()
     plt.savefig(f"{exp_paths['metrics_path']}/ssim_vs_cloud_cover.svg")
     plt.close()
 
-    # Visualization for SAM vs Valid Pixel
-    fig, axs = plt.subplots(1, len(bands), figsize=(18, 6))
+
+    # --- SAM vs Valid Pixel ---
+    fig, axs = plt.subplots(nrows, ncols, figsize=(6*ncols, 5*nrows))
+    axs = axs.flatten()
     global_ymax = max(df_test_output[f'sam_{band}'].max() for band in bands) * 1.05
 
     for i, band in enumerate(bands):
@@ -437,75 +453,76 @@ def post_traing_analysis(path):
         ax.set_ylim(0, global_ymax)
         plt.colorbar(scatter, ax=ax, label="Valid Pixel (%)")
 
+    for j in range(len(bands), len(axs)):
+        fig.delaxes(axs[j])
+
     plt.tight_layout()
     plt.savefig(f"{exp_paths['metrics_path']}/sam_vs_valid_pixel.svg")
     plt.close()
 
+
     # Create a 3D scatter plot for SAM B03 vs Cloud Cover vs Valid Pixels
     import plotly.express as px
-
     plot_3d_scatter(
         df=df_test_output,
         x_col='cloud_cover',
         y_col='valid_pixel',
-        z_col='sam_B02',
+        z_col='ssim_b07',
         color_col='cloud_cover',
         labels={
             'cloud_cover': 'Cloud Cover (%)',
             'valid_pixel': 'Valid Pixels (%)',
-            'sam_B02': 'SAM B02'
+            'ssim_b07': 'SAM B02'
         },
         title='3D Scatter: SAM B02 vs Cloud Cover vs Valid Pixels',
         output_path=f"{exp_paths['metrics_path']}/sam_vs_valid_pixel_cloud_cover.html"
     )
 
 
+    # # Top worst predictions for SAM and SSIM
+    # top_10_min_ssim_idx = df_test_output.sort_values(f'ssim_b02').head(10).index.tolist()
+    # top_10_max_sam_idx = df_test_output.sort_values(f'sam_b02', ascending=False).head(10).index.tolist()
 
-    # Top worst predictions for SAM and SSIM
-    top_10_min_ssim_idx = df_test_output.sort_values(f'ssim_B02').head(10).index.tolist()
-    top_10_max_sam_idx = df_test_output.sort_values(f'sam_B02', ascending=False).head(10).index.tolist()
+    # logger.info(f"Top 10 indices with minimum SSIM for b02: {top_10_min_ssim_idx}")
+    # logger.info(f"Top 10 indices with maximum SAM for b02: {top_10_max_sam_idx}")
 
-    logger.info(f"Top 10 indices with minimum SSIM for B02: {top_10_min_ssim_idx}")
-    logger.info(f"Top 10 indices with maximum SAM for B02: {top_10_max_sam_idx}")
+    # # Evaluate and plot for worst SAM predictions
+    # outputs_worst_sam_path = f"{exp_paths['metrics_path']}/outputs_worst_sam"
+    # os.makedirs(outputs_worst_sam_path, exist_ok=True)
 
-    # Evaluate and plot for worst SAM predictions
-    outputs_worst_sam_path = f"{exp_paths['metrics_path']}/outputs_worst_sam"
-    os.makedirs(outputs_worst_sam_path, exist_ok=True)
+    # for idx in top_10_max_sam_idx:
+    #     evaluate_and_plot(model, df_test_input, df_test_output, bands=bands,cmap="Greys_r", resize=resize,
+    #                     device=device, index=idx, verbose=False, save=True, output_path=outputs_worst_sam_path)
 
-    for idx in top_10_max_sam_idx:
-        evaluate_and_plot(model, df_test_input, df_test_output, bands=bands,cmap="Greys_r", resize=resize,
-                        device=device, index=idx, verbose=False, save=True, output_path=outputs_worst_sam_path)
+    # # Evaluate and plot for worst SSIM predictions
+    # outputs_worst_ssim_path = f"{exp_paths['metrics_path']}/outputs_worst_ssim"
+    # os.makedirs(outputs_worst_ssim_path, exist_ok=True)
 
-    # Evaluate and plot for worst SSIM predictions
-    outputs_worst_ssim_path = f"{exp_paths['metrics_path']}/outputs_worst_ssim"
-    os.makedirs(outputs_worst_ssim_path, exist_ok=True)
+    # for idx in top_10_min_ssim_idx:
+    #     evaluate_and_plot(model, df_test_input, df_test_output, bands=bands,cmap="Greys_r", resize=resize,
+    #                     device=device, index=idx, verbose=False, save=True, output_path=outputs_worst_ssim_path)
 
-    for idx in top_10_min_ssim_idx:
-        evaluate_and_plot(model, df_test_input, df_test_output, bands=bands,cmap="Greys_r", resize=resize,
-                        device=device, index=idx, verbose=False, save=True, output_path=outputs_worst_ssim_path)
+    # # Top best predictions for SAM and SSIM
+    # top_10_max_ssim_idx = df_test_output.sort_values(f'ssim_b02').tail(20).index.tolist()
+    # top_10_min_sam_idx = df_test_output.sort_values(f'sam_b02', ascending=False).tail(20).index.tolist()
 
-    # Top best predictions for SAM and SSIM
-    top_10_max_ssim_idx = df_test_output.sort_values(f'ssim_B02').tail(20).index.tolist()
-    top_10_min_sam_idx = df_test_output.sort_values(f'sam_B02', ascending=False).tail(20).index.tolist()
+    # logger.info(f"Top 10 indices with maximum SSIM for B02: {top_10_max_ssim_idx}")
+    # logger.info(f"Top 10 indices with minimum SAM for B02: {top_10_min_sam_idx}")
 
-    logger.info(f"Top 10 indices with maximum SSIM for B02: {top_10_max_ssim_idx}")
-    logger.info(f"Top 10 indices with minimum SAM for B02: {top_10_min_sam_idx}")
+    # # Evaluate and plot for best SAM predictions
+    # output_best_sam_path = f"{exp_paths['metrics_path']}/outputs_best_sam"
+    # os.makedirs(output_best_sam_path, exist_ok=True)
 
-    # Evaluate and plot for best SAM predictions
-    output_best_sam_path = f"{exp_paths['metrics_path']}/outputs_best_sam"
-    os.makedirs(output_best_sam_path, exist_ok=True)
+    # for idx in top_10_min_sam_idx:
+    #     evaluate_and_plot(model, df_test_input, df_test_output, bands=bands,cmap="Greys_r", resize=resize,
+    #                     device=device, index=idx, verbose=False, save=True, output_path=output_best_sam_path)
 
-    for idx in top_10_min_sam_idx:
-        evaluate_and_plot(model, df_test_input, df_test_output, bands=bands,cmap="Greys_r", resize=resize,
-                        device=device, index=idx, verbose=False, save=True, output_path=output_best_sam_path)
+    # # Evaluate and plot for best SSIM predictions
+    # output_best_ssim_path = f"{exp_paths['metrics_path']}/outputs_best_ssim"
+    # os.makedirs(output_best_ssim_path, exist_ok=True)
 
-    # Evaluate and plot for best SSIM predictions
-    output_best_ssim_path = f"{exp_paths['metrics_path']}/outputs_best_ssim"
-    os.makedirs(output_best_ssim_path, exist_ok=True)
+    # for idx in top_10_max_ssim_idx:
+    #     evaluate_and_plot(model, df_test_input, df_test_output, bands=bands,cmap="Greys_r", resize=resize,
+    #                     device=device, index=idx, verbose=False, save=True, output_path=output_best_ssim_path)
 
-    for idx in top_10_max_ssim_idx:
-        evaluate_and_plot(model, df_test_input, df_test_output, bands=bands,cmap="Greys_r", resize=resize,
-                        device=device, index=idx, verbose=False, save=True, output_path=output_best_ssim_path)
-
-
-# post_traing_analysis(path="/home/ubuntu/project/sentinel-2-ai-compressor/src/results/2025-08-14_14-03-11")
+# post_traing_analysis(path="/home/ubuntu/project/sentinel-2-ai-compressor/src/results/2025-08-19_13-36-55")
