@@ -317,7 +317,6 @@ class Sentinel2ZarrDataset(Dataset):
         nb_chunks_y = len(data.chunksizes[self.y_res])
         nb_chunks_x = len(data.chunksizes[self.x_res])
 
-
         all_chunks, all_masks = [], []
 
         for row in range(nb_chunks_y):  # Y direction
@@ -351,8 +350,6 @@ class Sentinel2ZarrDataset(Dataset):
                     mode='nearest'
                 ).squeeze(0)
                 mask_tensor = mask_tensor > 0.5
-
-                # logger.debug(f"[{index}] Chunk ({row},{col}) resized to {self.target_size}, tensor shape: {chunk_tensor.shape}")
 
                 all_chunks.append(chunk_tensor)
                 all_masks.append(mask_tensor)

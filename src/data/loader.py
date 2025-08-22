@@ -44,7 +44,7 @@ def define_loaders(
         val_loader = DataLoader(
             val_dataset,
             batch_size=batch_size,
-            shuffle=False,
+            shuffle=True,
             num_workers=num_workers,
             prefetch_factor=3,
             persistent_workers=True,

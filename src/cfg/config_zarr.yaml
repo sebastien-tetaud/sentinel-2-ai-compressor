@@ -11,11 +11,13 @@ ENDPOINTS:
 
 MODEL:
   model_name: "Unet"
-  encoder_name: "timm-efficientnet-b0"
+  encoder_name: "mit_b1"
   encoder_weights: "imagenet"
   in_channel: 11
   out_channels: 11
   activation: relu
+
+
 
 # MODEL:
 #   model_name: "AutoEncoder"
