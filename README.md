@@ -5,7 +5,7 @@
 1. Clone the repository:
 
 ```bash
-git clone git@github.com:sebastien-tetaud/sentinel-2-ai-processor.git
+git clone git@github.com:sebastien-tetaud/sentinel-2-ai-compressor.git
 cd sentinel-2-ai-processor
 ```
 
@@ -32,11 +32,4 @@ then:
 ```
 ACCESS_KEY_ID=username
 SECRET_ACCESS_KEY=password
-```
-
-
-
-## dl data
-```bash
-python download.py --config /mnt/disk/dataset/sentinel-ai-processor/V2/config_20250418_134103.yaml --l1c-csv /mnt/disk/dataset/sentinel-ai-processor/V2/input_l1c.csv --l2a-csv /mnt/disk/dataset/sentinel-ai-processor/V2/output_l2a.csv
 ```
