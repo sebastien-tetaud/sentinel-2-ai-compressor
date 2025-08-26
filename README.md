@@ -1,6 +1,6 @@
 # Sentinel-2 AI Compressor
 
-## Installation
+## I - Installation
 
 1. Clone the repository:
 
@@ -33,3 +33,23 @@ then:
 ACCESS_KEY_ID=username
 SECRET_ACCESS_KEY=password
 ```
+
+## II - Download Dataset
+
+```bash
+cd src/generate_dataset
+```
+
+then
+
+```bash
+python download_v4.py
+```
+
+## III - Train the Model
+
+```bash
+python main.py
+```
+
+The **main.py** is using **src/cfg/config.yaml** configuration file.

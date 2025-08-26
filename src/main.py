@@ -10,7 +10,7 @@ import yaml
 from loguru import logger
 from tqdm import tqdm
 
-from data.dataset import Sentinel2Dataset
+from data.dataset import Sentinel2ZarrDataset
 from data.loader import define_loaders
 from model_zoo.models import define_model, AutoEncoder
 from training.metrics import MultiSpectralMetrics, avg_metric_bands
@@ -68,29 +68,26 @@ def prepare_paths(path_dir):
 def prepare_data(config):
     base_dir = config['DATASET']['base_dir']
     version = config['DATASET']['version']
-    resize = config['TRAINING']['resize']
-    augmentation = config['TRAINING']['augmentation']
-
-    print(augmentation)
-
-
+    # resize = config['TRAINING']['resize']
+    # augmentation = config['TRAINING']['augmentation']
+    res = config['DATASET']['res']
+    bands = config['DATASET']['bands']
+    logger.warning(f"Number of band {len(bands)}")
     TRAIN_DIR = f"{base_dir}/{version}/train/"
     VAL_DIR = f"{base_dir}/{version}/val/"
     TEST_DIR = f"{base_dir}/{version}/test/"
 
-    df_train_input, df_train_output =  prepare_paths(TRAIN_DIR)
-    df_val_input, df_val_output =  prepare_paths(VAL_DIR)
-    df_test_input, df_test_output =  prepare_paths(TEST_DIR)
+    _ , df_train_output =  prepare_paths(TRAIN_DIR)
+    _ , df_val_output =  prepare_paths(VAL_DIR)
+    _ , df_test_output =  prepare_paths(TEST_DIR)
 
-    logger.info(f"Number of training samples: {len(df_train_input)}")
-    logger.info(f"Number of validation samples: {len(df_val_input)}")
-    logger.info(f"Number of test samples: {len(df_test_input)}")
+    logger.info(f"Number of training samples: {len(df_train_output)}")
+    logger.info(f"Number of validation samples: {len(df_val_output)}")
+    logger.info(f"Number of test samples: {len(df_test_output)}")
 
-
-    train_dataset = Sentinel2Dataset(df_x=df_train_input, df_y=df_train_output, train=True, augmentation=augmentation, img_size=resize)
-    val_dataset = Sentinel2Dataset(df_x=df_val_input, df_y=df_val_output, train=False, augmentation=False, img_size=resize)
-    test_dataset = Sentinel2Dataset(df_x=df_test_input, df_y=df_test_output, train=False, augmentation=False, img_size=resize)
-
+    train_dataset = Sentinel2ZarrDataset(df_x=df_train_output, res=res, bands=bands, target_size=(320,320))
+    val_dataset = Sentinel2ZarrDataset(df_x=df_val_output, res=res, bands=bands, target_size=(320,320))
+    test_dataset = Sentinel2ZarrDataset(df_x=df_test_output,res=res, bands=bands, target_size=(320,320))
 
     train_loader, val_loader = define_loaders(
         train_dataset=train_dataset,
@@ -113,6 +110,7 @@ def build_model(config):
 
 
     if config['MODEL']['model_name'] == "AutoEncoder":
+
 
         logger.info(f"Using AutoEncoder with depth: {config['MODEL']['depth']}")
         logger.info(f"Base channels: {config['MODEL']['base_channels']}")
@@ -171,19 +169,20 @@ def train_epoch(model, train_loader, optimizer, criterion, device, metrics_track
 
     with tqdm(total=len(train_loader.dataset), ncols=100, colour='#3eedc4') as t:
         t.set_description("Training")
-        for x_data, y_data, valid_mask in train_loader:
-            x_data, y_data = x_data.to(device), y_data.to(device)
-            valid_mask = valid_mask.to(device)
+        for batch_idx, (chunks_grid, masks_grid, meta) in enumerate(train_loader):
+            B, ny, nx, C, H, W = chunks_grid.shape
+            chunks_tensor = chunks_grid.view(B*ny*nx, C, H, W).to(device)
+            masks_tensor = masks_grid.view(B*ny*nx, C, H, W).to(device)
             optimizer.zero_grad()
-            outputs = model(x_data)
-            loss = criterion(outputs[valid_mask], y_data[valid_mask])
+            outputs = model(chunks_tensor)
+            loss = criterion(outputs[masks_tensor], chunks_tensor[masks_tensor])
             loss.backward()
             optimizer.step()
-
-            metrics_tracker.update(outputs, y_data, valid_mask)
+            metrics_tracker.update(outputs, chunks_tensor, masks_tensor)
             train_loss += loss.item()
             t.set_postfix(loss=loss.item())
-            t.update(x_data.size(0))
+            # t.update(masks_tensor.size(0))
+            t.update(B)
 
     return train_loss / len(train_loader), metrics_tracker.compute()
 
@@ -196,15 +195,18 @@ def validate(model, val_loader, criterion, device, metrics_tracker):
     with torch.no_grad():
         with tqdm(total=len(val_loader.dataset), ncols=100, colour='#f4d160') as t:
             t.set_description("Validation")
-            for x_data, y_data, valid_mask in val_loader:
-                x_data, y_data = x_data.to(device), y_data.to(device)
-                valid_mask = valid_mask.to(device)
-                outputs = model(x_data)
-                loss = criterion(outputs[valid_mask], y_data[valid_mask])
-                metrics_tracker.update(outputs, y_data, valid_mask)
+
+            for chunks_grid, masks_grid, meta in val_loader:
+                # chunks_grid: [B, nb_chunks_y, nb_chunks_x, C, H, W]
+                B, ny, nx, C, H, W = chunks_grid.shape
+                chunks_tensor = chunks_grid.view(B * ny * nx, C, H, W).to(device)
+                masks_tensor = masks_grid.view(B*ny*nx, C, H, W).to(device)
+                outputs = model(chunks_tensor)
+                loss = criterion(outputs[masks_tensor], chunks_tensor[masks_tensor])
+                metrics_tracker.update(outputs, chunks_tensor, masks_tensor)
                 val_loss += loss.item()
                 t.set_postfix(loss=loss.item())
-                t.update(x_data.size(0))
+                t.update(B)
 
     return val_loss / len(val_loader), metrics_tracker.compute()
 
@@ -217,15 +219,18 @@ def test_model(model, test_loader, criterion, device, metrics_tracker):
     with torch.no_grad():
         with tqdm(total=len(test_loader.dataset), ncols=100, colour='#cc99ff') as t:
             t.set_description("Testing")
-            for x_data, y_data, valid_mask in test_loader:
-                x_data, y_data = x_data.to(device), y_data.to(device)
-                valid_mask = valid_mask.to(device)
-                outputs = model(x_data)
-                loss = criterion(outputs[valid_mask], y_data[valid_mask])
-                metrics_tracker.update(outputs, y_data, valid_mask)
+
+            for chunks_grid, masks_grid, meta in test_loader:
+                B, ny, nx, C, H, W = chunks_grid.shape
+                chunks_tensor = chunks_grid.view(B*ny*nx, C, H, W).to(device)
+                masks_tensor = masks_grid.view(B*ny*nx, C, H, W).to(device)
+                outputs = model(chunks_tensor)
+                loss = criterion(outputs[masks_tensor], chunks_tensor[masks_tensor])
+                metrics_tracker.update(outputs, chunks_tensor, masks_tensor)
                 test_loss += loss.item()
                 t.set_postfix(loss=loss.item())
-                t.update(x_data.size(0))
+                t.update(B)
+
 
     return test_loss / len(test_loader), metrics_tracker.compute()
 
@@ -268,14 +273,16 @@ def save_all_metrics(dict_metrics, test_metrics, bands, num_epochs, save_path, t
 
 
 def main():
-    config = load_config(config_path="cfg/config.yaml")
+
+    dir_path = os.getcwd()
+    config_path = os.path.join(dir_path,"cfg/config.yaml")
+    config = load_config(config_path=config_path)
     paths = create_result_dirs()
     log_path = paths['log_path']
     checkpoint_path = paths['checkpoint_path']
     metrics_path = paths['metrics_path']
     bands = config['DATASET']['bands']
     num_epochs = config['TRAINING']['n_epoch']
-
     # Initialize best metrics at the beginning of training
     if config['TRAINING']['save_strategy'] == "loss":
         best_metric = float('inf')  # For loss, lower is better
