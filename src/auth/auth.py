@@ -128,23 +128,3 @@ class S3Connector:
             return [bucket['Name'] for bucket in response['Buckets']]
         return []
 
-# if __name__ == "__main__":
-
-
-#     from dotenv import load_dotenv
-#     load_dotenv()
-#     # Get credentials from environment variables
-#     ACCESS_KEY_ID = os.environ.get("ACCESS_KEY_ID")
-#     SECRET_ACCESS_KEY = os.environ.get("SECRET_ACCESS_KEY")
-#     ENDPOINT_URL = 'https://eodata.dataspace.copernicus.eu'
-#     # Initialize the connector
-#     s3_connector = S3Connector(
-#         endpoint_url=ENDPOINT_URL,
-#         access_key_id=ACCESS_KEY_ID,
-#         secret_access_key=SECRET_ACCESS_KEY
-#     )
-#     # Connect to S3
-#     s3_connector.connect()
-#     s3_client = s3_connector.get_s3_client()
-
-

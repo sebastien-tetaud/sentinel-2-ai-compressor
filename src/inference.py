@@ -91,14 +91,7 @@ def data_query(catalog, bbox: list, start_date: str, end_date: str, max_cloud_co
         tuple: (matched L1C item, matched L2A item)
     """
     try:
-        # Search for L1C products
-        logger.info(f"Searching for L1C products from {start_date} to {end_date} in bbox {bbox}")
-        l1c_items = catalog.search(
-            collections=['sentinel-2-l1c'],
-            bbox=bbox,
-            datetime=f"{start_date}/{end_date}",
-            max_items=1000
-        ).item_collection()
+
 
         # Search for L2A products
         logger.info(f"Searching for L2A products from {start_date} to {end_date} in bbox {bbox}")
@@ -113,56 +106,36 @@ def data_query(catalog, bbox: list, start_date: str, end_date: str, max_cloud_co
         # Filter L2A items to remove those with high nodata percentage
         l2a_items = [item for item in l2a_items if item.properties.get("statistics", {}).get('nodata', 100) < 5]
 
-        # Convert to dataframes for easier matching
-        l1c_dicts = [item.to_dict() for item in l1c_items]
+
         l2a_dicts = [item.to_dict() for item in l2a_items]
 
-        df_l1c = pd.DataFrame(l1c_dicts)
+
         df_l2a = pd.DataFrame(l2a_dicts)
 
-        if df_l1c.empty or df_l2a.empty:
-            logger.warning(f"Found {len(l1c_items)} L1C products and {len(l2a_items)} L2A products (after filtering)")
-            return None, None
 
-        logger.info(f"Found {len(l1c_items)} L1C products and {len(l2a_items)} L2A products (after filtering)")
 
         # Create unique ID keys for matching
-        df_l1c['id_key'] = df_l1c['id'].apply(remove_last_segment_rsplit)
         df_l2a['id_key'] = df_l2a['id'].apply(remove_last_segment_rsplit)
-        df_l2a['id_key'] = df_l2a['id_key'].str.replace('MSIL2A_', 'MSIL1C_')
 
-        # Remove duplicates
-        df_l1c = df_l1c.drop_duplicates(subset='id_key', keep='first')
         df_l2a = df_l2a.drop_duplicates(subset='id_key', keep='first')
 
-        # Find matching items
-        df_l2a = df_l2a[df_l2a['id_key'].isin(df_l1c['id_key'])]
-        df_l1c = df_l1c[df_l1c['id_key'].isin(df_l2a['id_key'])]
+
 
         # Ensure order is aligned
         df_l2a = df_l2a.set_index('id_key')
-        df_l1c = df_l1c.set_index('id_key')
-        df_l2a = df_l2a.loc[df_l1c.index].reset_index()
-        df_l1c = df_l1c.reset_index()
 
-        logger.info(f"Found {len(df_l1c)} matching L1C/L2A pairs")
 
-        if len(df_l1c) == 0:
-            return None, None
 
         # Select a random pair with a fixed seed for reproducibility
 
-        random_idx = np.random.randint(0, len(df_l1c))
+        random_idx = np.random.randint(0, len(df_l2a))
 
-        selected_l1c = df_l1c.iloc[random_idx]
         selected_l2a = df_l2a.iloc[random_idx]
 
-        # Convert back to STAC items
-        l1c_item = next((item for item in l1c_items if item.id == selected_l1c['id']), None)
+
         l2a_item = next((item for item in l2a_items if item.id == selected_l2a['id']), None)
 
-        logger.success(f"Selected L1C: {l1c_item.id}, L2A: {l2a_item.id}")
-        return l1c_item, l2a_item
+        return l2a_item
 
     except Exception as e:
         logger.error(f"Error fetching Sentinel data: {e}")
@@ -274,12 +247,11 @@ def predict(model: torch.nn.Module, x_tensor: torch.Tensor) -> np.ndarray:
         return None
 
 @benchmark
-def generate_plot_band(x_np: np.ndarray, gt_np: np.ndarray, pred_np: np.ndarray, bands: list, cmap: str, output_dir: str) -> None:
+def generate_plot_band(gt_np: np.ndarray, pred_np: np.ndarray, bands: list, cmap: str, output_dir: str) -> None:
     """
     Visualize the results with a simple histogram comparison for prediction vs reference.
 
     Args:
-        x_np: Input data (L1C) array with shape [H, W, C]
         gt_np: Ground truth data (L2A) with shape [H, W, C]
         pred_np: Predicted data (L2A) array with shape [H, W, C]
         bands: List of band names
@@ -293,46 +265,38 @@ def generate_plot_band(x_np: np.ndarray, gt_np: np.ndarray, pred_np: np.ndarray,
             # Create a figure with images and a simple histogram
             fig = plt.figure(figsize=(20, 12))
 
-            # Define a grid layout - 2 rows, 4 columns with bigger image row
-            grid = plt.GridSpec(2, 4, height_ratios=[2, 1], hspace=0.3, wspace=0.3)
+            # Define a grid layout - 2 rows, 3 columns with bigger image row
+            grid = plt.GridSpec(2, 3, height_ratios=[2, 1], hspace=0.3, wspace=0.3)
 
             # Top row - images
             ax_img1 = plt.subplot(grid[0, 0])
             ax_img2 = plt.subplot(grid[0, 1])
             ax_img3 = plt.subplot(grid[0, 2])
-            ax_img4 = plt.subplot(grid[0, 3])
 
             # Bottom row - just one histogram comparing prediction and reference
             ax_hist = plt.subplot(grid[1, :])
 
             # Get the data for this band
-            band_x = x_np[:, :, idx]
             band_gt = gt_np[:, :, idx]
             band_pred = pred_np[:, :, idx]
 
             # Calculate the difference
             diff_target_pred = (np.abs(band_gt - band_pred) / band_gt) * 100
 
-            # Plot images
-            im1 = ax_img1.imshow(band_x, cmap=cmap, vmin=0, vmax=1)
-            ax_img1.set_title(f"Input L1C - Band: {band}", fontsize=14)
+            im1 = ax_img1.imshow(band_gt, cmap=cmap, vmin=0, vmax=1)
+            ax_img1.set_title(f"Reference L2A Sen2Cor - Band: {band}", fontsize=14)
             ax_img1.axis('off')
             plt.colorbar(im1, ax=ax_img1, fraction=0.046, pad=0.04)
 
-            im2 = ax_img2.imshow(band_gt, cmap=cmap, vmin=0, vmax=1)
-            ax_img2.set_title(f"Reference L2A Sen2Cor - Band: {band}", fontsize=14)
+            im2 = ax_img2.imshow(band_pred, cmap=cmap, vmin=0, vmax=1)
+            ax_img2.set_title(f"Prediction L2A - Band: {band}", fontsize=14)
             ax_img2.axis('off')
             plt.colorbar(im2, ax=ax_img2, fraction=0.046, pad=0.04)
 
-            im3 = ax_img3.imshow(band_pred, cmap=cmap, vmin=0, vmax=1)
-            ax_img3.set_title(f"Prediction L2A - Band: {band}", fontsize=14)
+            im3 = ax_img3.imshow(diff_target_pred, cmap='plasma', vmin=0, vmax=100)
+            ax_img3.set_title(f"Relative Error [%] - {band}", fontsize=14)
             ax_img3.axis('off')
             plt.colorbar(im3, ax=ax_img3, fraction=0.046, pad=0.04)
-
-            im4 = ax_img4.imshow(diff_target_pred, cmap='plasma', vmin=0, vmax=100)
-            ax_img4.set_title(f"Relative Error [%] - {band}", fontsize=14)
-            ax_img4.axis('off')
-            plt.colorbar(im4, ax=ax_img4, fraction=0.046, pad=0.04)
 
             # Simple histogram comparison
             # Filter out zeros and NaN values
@@ -375,12 +339,12 @@ def generate_plot_band(x_np: np.ndarray, gt_np: np.ndarray, pred_np: np.ndarray,
         logger.error(traceback.format_exc())
 
 @benchmark
-def generate_tci_plot(x_np: np.ndarray, gt_np: np.ndarray, pred_np: np.ndarray, bands: list, output_dir: str) -> None:
+def generate_tci_plot(gt_np: np.ndarray, pred_np: np.ndarray, bands: list, output_dir: str) -> None:
     """
     Generate True Color Image (RGB composite) plots for both input and predicted data.
 
     Args:
-        x_np: Input data array with shape [H, W, C]
+        gt_np: Input data array with shape [H, W, C]
         gt_np: Ground true L2A data array with shape [H, W, C]
         pred_np: Predicted data array with shape [H, W, C]
         bands: List of band names
@@ -401,27 +365,20 @@ def generate_tci_plot(x_np: np.ndarray, gt_np: np.ndarray, pred_np: np.ndarray, 
             return
         rgb_indices = rgb_indices[::-1]
         # Extract RGB bands
-        rgb_x = x_np[:, :, rgb_indices].copy()  # Make a copy to avoid modifying the original data
+        rgb_x = gt_np[:, :, rgb_indices].copy()  # Make a copy to avoid modifying the original data
         rgb_pred = pred_np[:, :, rgb_indices].copy()
-        gt_np = gt_np[:, :, rgb_indices].copy()
         # Create figure
-        fig, axs = plt.subplots(1, 3, figsize=(20, 10))
-
-        # Plot input TCI
-        axs[0].imshow(rgb_x)
-        axs[0].set_title(f"Input L1C - True Color Index {bands}", fontsize=16)
-        axs[0].axis('off')
-
+        fig, axs = plt.subplots(1, 2, figsize=(20, 10))
 
         # Plot gt  TCI
-        axs[1].imshow(rgb_pred)
-        axs[1].set_title(f"Reference L2A Sen2Cor- True Color Index {bands}", fontsize=16)
-        axs[1].axis('off')
+        axs[0].imshow(rgb_x)
+        axs[0].set_title(f"Reference L2A Sen2Cor- True Color Index {bands}", fontsize=16)
+        axs[0].axis('off')
 
         # Plot predicted TCI
-        axs[2].imshow(rgb_pred)
-        axs[2].set_title(f"Predicted L2A - True Color Index {bands}", fontsize=16)
-        axs[2].axis('off')
+        axs[1].imshow(rgb_pred)
+        axs[1].set_title(f"Predicted L2A - True Color Index {bands}", fontsize=16)
+        axs[1].axis('off')
 
         # Save figure
         fig.tight_layout()
@@ -473,7 +430,7 @@ def main() -> None:
 
     model_cfg = load_config(f"{dir_path}/cfg/config.yaml")
     query_cfg = load_config(f"{dir_path}/cfg/inference_query_config.yaml")
-    model_path = f"{dir_path}/weight/AiSen2Cor_EfficientNet_b2.pth"
+    model_path = f"/home/ubuntu/project/sentinel-2-ai-processor/src/results/2025-07-31_12-25-54/checkpoints/best_model.pth"
 
     # Setup
     endpoint_url = query_cfg["endpoint_url"]
@@ -489,9 +446,9 @@ def main() -> None:
     end_date = query_cfg["query"]["end_date"]
     max_cloud_cover = query_cfg["query"]["max_cloud_cover"]
 
-    l1c_item, l2a_item  = data_query(catalog, bbox, start_date, end_date, max_cloud_cover)
+    l2a_item  = data_query(catalog, bbox, start_date, end_date, max_cloud_cover)
 
-    l1c_raw_data = load_bands_from_s3(s3_client, bucket_name, l1c_item, bands)
+    # l1c_raw_data = load_bands_from_s3(s3_client, bucket_name, l1c_item, bands)
     l2a_raw_data = load_bands_from_s3(s3_client, bucket_name, l2a_item, bands, product_level="L2A")
 
     # Load model
@@ -500,16 +457,14 @@ def main() -> None:
 
     # Inference
     resize = model_cfg["TRAINING"]["resize"]
-    x_tensor, valid_mask = preprocess(raw_data=l1c_raw_data, resize=resize, device=device)
-    gt_tensor, gt_mask = preprocess(raw_data=l2a_raw_data, resize=resize, device=device)
+    x_tensor, valid_mask = preprocess(raw_data=l2a_raw_data, resize=resize, device=device)
     pred_np = predict(model=model, x_tensor=x_tensor)
 
     x_np, pred_np = postprocess(x_tensor=x_tensor, pred_tensor=pred_np, valid_mask=valid_mask)
-    gt_np, _ = postprocess(x_tensor=gt_tensor, pred_tensor=pred_np, valid_mask=gt_mask)
 
     # Visualization
-    generate_plot_band(x_np=x_np, gt_np=gt_np, pred_np=pred_np, bands=bands, cmap="Grays_r", output_dir=dir_path)
-    generate_tci_plot(x_np=x_np, gt_np=gt_np, pred_np=pred_np, bands=bands[::-1], output_dir=dir_path)
+    generate_plot_band(gt_np=x_np, pred_np=pred_np, bands=bands, cmap="Grays_r", output_dir=dir_path)
+    generate_tci_plot(gt_np=x_np, pred_np=pred_np, bands=bands[::-1], output_dir=dir_path)
 
 
     logger.info("Plot tile generation benchmark")
