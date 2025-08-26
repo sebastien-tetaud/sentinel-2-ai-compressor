@@ -6,14 +6,14 @@
 
 ```bash
 git clone git@github.com:sebastien-tetaud/sentinel-2-ai-compressor.git
-cd sentinel-2-ai-processor
+cd sentinel-2-ai-compressor
 ```
 
 2. Create and activate a conda environment:
 
 ```bash
-conda create -n ai_processor python==3.13.2
-conda activate ai_processor
+conda create -n ai_compressor python==3.13.2
+conda activate ai_compressor
 ```
 
 3. Install the required dependencies:
