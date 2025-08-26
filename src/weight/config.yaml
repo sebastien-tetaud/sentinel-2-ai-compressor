@@ -1,0 +1,45 @@
+DATASET:
+  bands:
+  - b01
+  - b02
+  - b03
+  - b04
+  - b05
+  - b06
+  - b07
+  - b09
+  - b11
+  - b12
+  - b8a
+  base_dir: /mnt/disk/dataset/sentinel-ai-processor
+  res: 60m
+  version: V4
+ENDPOINTS:
+  bucket_name: eodata
+  stac: https://stac.dataspace.copernicus.eu/v1/
+  url: ttps://eodata.dataspace.copernicus.eu
+MODEL:
+  activation: relu
+  encoder_name: timm-efficientnet-b2
+  encoder_weights: imagenet
+  in_channel: 11
+  model_name: Unet
+  out_channels: 11
+TRAINING:
+  augmentation: false
+  batch_size: 2
+  factor: 0.5
+  learning_rate: 1e-3
+  n_epoch: 100
+  num_workers: 4
+  optim: Adam
+  resize: 1024
+  save_metric: sam
+  save_mode: min
+  save_strategy: metric
+  scheduler: true
+  scheduler_type: ReduceLROnPlateau
+  seed: 42
+WANDB:
+  project_name: sentinel2-ai-compressor
+  track: true
