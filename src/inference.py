@@ -163,7 +163,7 @@ def data_query(catalog, bbox: list, start_date: str, end_date: str, max_cloud_co
 
 
 @benchmark
-def download_sentinel_data(env, config, product_url, dir_path):
+def download_sentinel_data(env, config, product_url, output_dir):
     """Download Sentinel data and convert to Zarr format."""
     try:
         from eopf.common.constants import OpeningMode
@@ -181,10 +181,8 @@ def download_sentinel_data(env, config, product_url, dir_path):
         ACCESS_KEY_ID = env['access_key_id']
         SECRET_ACCESS_KEY = env['secret_access_key']
 
-        tmp_dir = os.path.join(dir_path, "tmp")
-        os.makedirs(tmp_dir, exist_ok=True)
         zarr_filename = os.path.split(product_url)[1].replace('.SAFE', '.zarr')
-        zarr_path = os.path.join(tmp_dir, zarr_filename)
+        zarr_path = os.path.join(output_dir, zarr_filename)
 
         # Check if file already exists
         if os.path.exists(zarr_path):
@@ -242,6 +240,7 @@ def load_bands_from_s3(s3_client, bucket_name: str, item, bands: list, resize_sh
         logger.error(f"Failed to load bands from S3 storage: {e}")
         return None
 
+@benchmark
 def normalize(data_array):
     """
     Normalize the data array to the range [0, 1].
@@ -678,7 +677,7 @@ def plot_benchmark_results(function_durations, output_dir):
     plt.savefig(f"{output_dir}/benchmark_results.svg", dpi=300)
     plt.close()
 
-
+@benchmark
 def reassemble_to_original(outputs_flat, meta):
     """
     Reassemble model outputs from flattened chunks back to original raster dimensions.
@@ -805,7 +804,7 @@ def create_comprehensive_comparison_plot(input_data, output_data, bands, output_
     except Exception as e:
         logger.error(f"Failed to create comprehensive comparison plots: {e}")
 
-
+@benchmark
 def plot_rgb_composite(reconstruction, bands, output_path="tci_composite.png", figsize=(15, 5)):
     """
     Create RGB composite visualization.
@@ -892,8 +891,11 @@ def main() -> None:
     end_date = query_cfg["query"]["end_date"]
     max_cloud_cover = query_cfg["query"]["max_cloud_cover"]
     product_url  = data_query(catalog, bbox, start_date, end_date, max_cloud_cover)
-    print(product_url)
-    zarr_path = download_sentinel_data(env, query_cfg, product_url, dir_path)
+    # Create output directory for results
+    output_dir = os.path.join(dir_path, "inference_results")
+    os.makedirs(output_dir, exist_ok=True)
+
+    zarr_path = download_sentinel_data(env, query_cfg, product_url, output_dir)
 
     # For demo purposes, use existing zarr file
     # zarr_path = "/mnt/disk/dataset/sentinel-ai-processor/V4/test/target/S2A_MSIL2A_20180319T104021_N0500_R008_T31TFL_20230905T060417.zarr/"
@@ -924,9 +926,7 @@ def main() -> None:
     full_reconstruction = reassemble_to_original(pred.cpu(), meta)
     logger.info(f"Reconstruction shape: {full_reconstruction.shape}")
 
-    # Create output directory for results
-    output_dir = os.path.join(dir_path, "inference_results")
-    os.makedirs(output_dir, exist_ok=True)
+
 
     # Save comprehensive metrics to CSV
     csv_path = save_metrics_to_csv(metrics, zarr_path, output_dir)

@@ -17,7 +17,7 @@ A deep learning pipeline for compressing and reconstructing Sentinel-2 satellite
 ```bash
 git clone git@github.com:sebastien-tetaud/sentinel-2-ai-compressor.git
 cd sentinel-2-ai-compressor
-conda create -n ai_compressor python==3.13.2
+conda create -n ai_compressor python==3.11.4
 conda activate ai_compressor
 pip install -r requirements.txt
 ```
@@ -46,7 +46,7 @@ python main.py
 **Run Enhanced Inference:**
 ```bash
 cd src
-python enhanced_inference_pipeline.py
+python inference.py
 ```
 
 ## Key Scripts
